@@ -548,7 +548,8 @@ def save_train_data_in_filenames(train_filenames, train_synset_ids, hdf5_img, hd
                              synset_to_label_map=synset_to_label_map)
 
     # do not use all the CPUs if there are a lot only use half of them
-    cpu_count = mp.cpu_count() if mp.cpu_count()<32 else mp.cpu_count()//2
+    # if using all, leave one free
+    cpu_count = mp.cpu_count()-1 if mp.cpu_count()<32 else mp.cpu_count()//2
     pool = mp.Pool(cpu_count)
     print('Using %d CPU cores'%cpu_count)
 
