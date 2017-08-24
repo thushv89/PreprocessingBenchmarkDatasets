@@ -185,11 +185,18 @@ def save_imagenet_as_memmaps(train_dir,valid_dir, valid_annotation_dir, gloss_fn
     write_dictionary_to_xml(datasize_fname,filesize_dictionary,'dataset',datatypes[0],['size'],[datatypes[1]])
 
 
-def divide_filenames_for_threads(filenames,synset_ids,n_threads):
+def divide_filenames_for_workers(filenames, synset_ids, n_chunks):
+    '''
+    Divides a given set of filenames, synset_ids to n_chunks
+    :param filenames:
+    :param synset_ids:
+    :param n_chunks:
+    :return:
+    '''
 
     thread_filenames, thread_synset_ids, thread_indices = [],[],[]
-    items_per_thread = ceil(len(filenames)*1.0/n_threads)
-    for i in range(n_threads):
+    items_per_thread = ceil(len(filenames)*1.0/n_chunks)
+    for i in range(n_chunks):
         start_idx = i*items_per_thread
         end_idx = min([(i+1)*items_per_thread,len(filenames)])
         thread_indices.append(list(range(start_idx,end_idx)))
@@ -238,7 +245,11 @@ def write_dictionary_to_xml(fname,dictionary,key_id,key_datatype, value_id_list,
 
 
 def retrive_dictionary_from_xml(fname):
-
+    '''
+    Retrieves a dictionary from the xml file
+    :param fname: Name of the xml file
+    :return:
+    '''
     dictionary = {}
     tree = ET.parse(fname)
     root = tree.getroot()
@@ -263,6 +274,12 @@ def retrive_dictionary_from_xml(fname):
 
 
 def shuffle_in_unison(a, b):
+    '''
+    Shuffle two arrays in the same random order
+    :param a: 1st array
+    :param b: 2nd array
+    :return:
+    '''
     rng_state = np.random.get_state()
     np.random.shuffle(a)
     np.random.set_state(rng_state)
@@ -270,11 +287,17 @@ def shuffle_in_unison(a, b):
 
     return a,b
 
-
+# For the xml file
 datatypes = ['string','int32','float32']
 
 
 def get_item_with_dtype(value,dtype):
+    '''
+    Get a given string (value) with the given dtype
+    :param value:
+    :param dtype:
+    :return:
+    '''
     if dtype==datatypes[0]:
         return str(value)
     elif dtype==datatypes[1]:
@@ -286,7 +309,13 @@ def get_item_with_dtype(value,dtype):
 
 
 def build_or_retrieve_valid_filename_to_synset_id_mapping(valid_annotation_dir, valid_map_fname):
-
+    '''
+    Build or retrieve (if exists) a dictionary mapping valid dataset filenames to the corresponding synset ids
+    This is important for creating labels for the validation data points
+    :param valid_annotation_dir: Annotation directory for valid data
+    :param valid_map_fname: The name to save the created dictionary
+    :return:
+    '''
     print('Building a mapping from valid file name to synset id (also the folder names in the training folder)')
     # valid_map contains a dictionary mapping filename to synset id (e.g. n01440764 is a synset id)
     if not os.path.exists(valid_map_fname):
@@ -311,7 +340,14 @@ def build_or_retrieve_valid_filename_to_synset_id_mapping(valid_annotation_dir, 
 
 
 def retrieve_art_nat_ordered_class_descriptions(gloss_cls_loc_fname):
-    synset_id_to_description=_to_description = {}
+    '''
+    Retrives the selected natural and artificial synset ids from a previously
+    saved file
+    :param gloss_cls_loc_fname: Name of the file to retrieve data from
+    :return:
+    '''
+
+    synset_id_to_description = {}
     with open(gloss_cls_loc_fname, 'r') as f:
         for line in f:
             subdir_str = line.split('\t')[0]
@@ -416,6 +452,7 @@ def resize_image(fname,resize_to,n_channels):
     resize image
     if the resize size is more than the actual size, we pad with zeros
     if the image is black and white, we create 3 channels of same data
+    if the images has alpha channel, we discard the channel
     :param fname:
     :return:
     '''
@@ -450,7 +487,16 @@ def resize_image(fname,resize_to,n_channels):
 
 
 def read_train_data_chunk(fname, synset_id, synset_to_label_map, resize_to, n_channels):
-
+    '''
+    Read one example and output the processed image and the label.
+    This method is called by the pool workers (multiprocessing)
+    :param fname:
+    :param synset_id:
+    :param synset_to_label_map:
+    :param resize_to:
+    :param n_channels:
+    :return:
+    '''
     train_images = np.zeros((resize_to,resize_to,n_channels),dtype=np.float32)
     train_labels = np.zeros((1,), dtype=np.int32)
 
@@ -494,7 +540,7 @@ def save_train_data_in_filenames(train_filenames, train_synset_ids, hdf5_img, hd
 
     # divide the full data in to n_chunk sets
     # so it can be performed by multiple workers
-    train_filenames_list, train_synsetid_list, train_indices = divide_filenames_for_threads(train_filenames, train_synset_ids, n_chunk)
+    train_filenames_list, train_synsetid_list, train_indices = divide_filenames_for_workers(train_filenames, train_synset_ids, n_chunk)
 
     # partial function of read_train_data_chunk with only train_filenames, train_synset_ids, train_indices as inputs
     part_pool_func = partial(read_train_data_chunk,
@@ -542,56 +588,6 @@ def save_train_data_in_filenames(train_filenames, train_synset_ids, hdf5_img, hd
     pool.join()
 
     print('The whole process took %d seconds',total_time)
-
-
-def get_next_memmap_indices(filenames,chunk_size,dataset_size):
-    global memmap_offset
-
-    if memmap_offset == -1:
-        memmap_offset = 0
-
-    if memmap_offset>=dataset_size:
-        print('Resetting memmap offset...\n')
-        memmap_offset = 0
-
-    # e.g if dataset_size=10, offset=4 chunk_size=5
-    if memmap_offset+chunk_size<=dataset_size-1:
-        prev_offset = memmap_offset
-        memmap_offset = memmap_offset+chunk_size
-        return int(prev_offset),int(memmap_offset)
-
-    # e.g. if dataset_size = 10 offset=7 chunk_size=5
-    # data from last => (10-1) - 7
-    else:
-        prev_offset = memmap_offset
-        memmap_offset = dataset_size
-        return int(prev_offset),int(memmap_offset)
-
-
-def reformat_data_imagenet_with_memmap_array(dataset,labels,**params):
-
-    image_size = 224
-    num_labels = 100
-    num_channels = 3 # rgb
-
-    labels = labels.flatten().astype(np.int32)
-    if 'silent' not in params or ('silent' in params and not params['silent']):
-        print("Reformatted data ...")
-        print('\tlabels shape: ',labels.shape)
-
-    if 'test_images' in params and params['test_images']:
-        for i in range(10):
-            rand_idx = np.random.randint(0,dataset.shape[0])
-            imsave('test_img_'+str(i)+'.png', dataset[rand_idx,:,:,:])
-
-    if 'silent' not in params or ('silent' in params and not params['silent']):
-        print('\tFinal shape:%s',dataset.shape)
-    ohe_labels = (np.arange(num_labels) == labels[:,None]).astype(np.float32)
-    if 'silent' not in params or ('silent' in params and not params['silent']):
-        print('\tFinal shape labels:',ohe_labels.shape)
-
-    assert np.all(labels==np.argmax(ohe_labels,axis=1))
-    return dataset,ohe_labels
 
 
 if __name__ == '__main__':
