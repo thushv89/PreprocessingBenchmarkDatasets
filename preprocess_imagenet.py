@@ -4,17 +4,19 @@ from six.moves import cPickle as pickle
 from six.moves import range
 import numpy as np
 import os
-from scipy import ndimage
 from PIL import Image
 import xml.etree.ElementTree as ET
 from math import ceil,floor
-from scipy.misc import imsave
+#from scipy.misc import imsave
 import h5py
-#import _thread as thread
 import multiprocessing as mp
 from functools import partial
 import sys
 import time
+import logging
+
+logger = None
+
 
 def save_imagenet_as_memmaps(train_dir,valid_dir, valid_annotation_dir, gloss_fname,
                              n_nat_classes, n_art_classes, resize_images_to, save_dir,
@@ -28,7 +30,7 @@ def save_imagenet_as_memmaps(train_dir,valid_dir, valid_annotation_dir, gloss_fn
     :param n_art_classes: How many artificial object classes in the data
     :return:
     '''
-
+    global logger
     dataset_filename = save_dir + os.sep +  'imagenet_250_train_dataset.hdf5'
 
     gloss_cls_loc_fname = save_dir + os.sep + 'gloss-cls-loc.txt'  # the gloss.txt has way more categories than the 1000 imagenet ones. This files saves the 1000
@@ -41,8 +43,6 @@ def save_imagenet_as_memmaps(train_dir,valid_dir, valid_annotation_dir, gloss_fn
     label_info_fname = save_dir + os.sep + 'temp_lable_info.pkl'
 
     hdf5_sep = '/'
-    if not os.path.exists(save_dir):
-        os.mkdir(save_dir)
 
     num_channels = 3
 
@@ -58,8 +58,9 @@ def save_imagenet_as_memmaps(train_dir,valid_dir, valid_annotation_dir, gloss_fn
 
     # ignoring the 0th element because it is just a space
     train_subdirectories = [os.path.split(x[0])[1] for x in os.walk(train_dir)][1:]
-    print('Subdirectories: %s\n' % train_subdirectories[:5])
-    print('Num subdir: ',len(train_subdirectories))
+    print('Subdirectory Summary')
+    print('\tSample Subdirectories: %s\n' % train_subdirectories[:5])
+    print('\tNumber of total SubDirs: ',len(train_subdirectories))
 
     if not os.path.exists(gloss_cls_loc_fname):
         synset_id_to_desc_map = write_art_nat_ordered_class_descriptions(train_subdirectories,gloss_fname, gloss_cls_loc_fname)
@@ -95,6 +96,13 @@ def save_imagenet_as_memmaps(train_dir,valid_dir, valid_annotation_dir, gloss_fn
             selected_artificial_synsets = label_info['art_synsets']
             id_to_label_map = label_info['id_to_label_map']
 
+    write_selected_art_nat_synset_ids_and_descriptions(selected_natural_synsets, selected_artificial_synsets,
+                                                       synset_id_to_desc_map, selected_gloss_class_fname,
+                                                       id_to_label_map)
+
+    assert len(id_to_label_map) == n_nat_classes + n_art_classes, \
+        'Label map ([synset_id] -> my class label) size does not math class counts'
+
     # we use a shuffled train set when storing to avoid any order
     n_train = 0
     train_filenames = []
@@ -120,35 +128,40 @@ def save_imagenet_as_memmaps(train_dir,valid_dir, valid_annotation_dir, gloss_fn
 
     dataset_names = hdf5_file.keys()
 
-    if not ('train'+hdf5_sep+'images' in dataset_names and 'train'+hdf5_sep+'labels' in dataset_names):
-        hdf5_train_group = hdf5_file.create_group('train')
-        hdf5images = hdf5_train_group.create_dataset('images',(n_train, resize_images_to,
-                                                               resize_images_to, num_channels), dtype='f')
-        hdf5labels = hdf5_train_group.create_dataset('labels',(n_train,1), dtype='int32')
+    # =====================================================================
+    # Saving Training Data
+    # =====================================================================
+    try:
+        if not ('train'+hdf5_sep+'images' in dataset_names and 'train'+hdf5_sep+'labels' in dataset_names):
+            hdf5_train_group = hdf5_file.create_group('train')
+            hdf5images = hdf5_train_group.create_dataset('images',(n_train, resize_images_to,
+                                                                   resize_images_to, num_channels), dtype='f')
+            hdf5labels = hdf5_train_group.create_dataset('labels',(n_train,1), dtype='int32')
 
-        filesize_dictionary = dict()
-        print("\tMemory allocated for (%d items)..." % n_train)
-        filesize_dictionary['train_dataset'] = n_train
+            filesize_dictionary = dict()
+            print("\tMemory allocated for (%d items)..." % n_train)
+            filesize_dictionary['train_dataset'] = n_train
 
-        save_train_data_in_filenames(train_filenames, train_synset_ids, hdf5images, hdf5labels,
-                                     resize_images_to, num_channels, id_to_label_map, n_threads)
+            save_train_data_in_filenames(train_filenames, train_synset_ids, hdf5images, hdf5labels,
+                                         resize_images_to, num_channels, id_to_label_map, n_threads)
 
-        # TODO: Need to fix this
-        #write_dictionary_to_xml(id_to_label_map_fname,id_to_label_map,'synset_id',datatypes[0],['label'],[datatypes[1]])
+            # TODO: Need to fix this
+            #write_dictionary_to_xml(id_to_label_map_fname,id_to_label_map,'synset_id',datatypes[0],['label'],[datatypes[1]])
 
-    else:
-        print('Training data exists ...')
-        raise NotImplementedError
+        else:
+            print('Training data exists ...')
 
-    write_selected_art_nat_synset_ids_and_descriptions(selected_natural_synsets,selected_artificial_synsets,
-                                                       synset_id_to_desc_map,selected_gloss_class_fname,id_to_label_map)
+    except Exception as e:
+        print('Something went wrong. Deleting the HDF5 File')
+        print(e.with_traceback())
+        logger.info('Something went wrong. Deleting the HDF5 File')
+        hdf5_file.__delitem__(hdf5images)
+        hdf5_file.__delitem__(hdf5labels)
 
-    assert len(id_to_label_map) == n_nat_classes + n_art_classes, \
-        'Label map ([synset_id] -> my class label) size does not math class counts'
-
-    # --------------------------------------------------------------------------------
-    # Saving validation data
-    # --------------------------------------------------------------------------------
+    # =====================================================================
+    # Saving Validation Data
+    # To restore it needs: id_to_label_map, valid_map
+    # =====================================================================
 
     valid_filenames, valid_classes = zip(*valid_map.items())
     print('\tValid filenames:', list(valid_map.keys())[:5])
@@ -166,21 +179,30 @@ def save_imagenet_as_memmaps(train_dir,valid_dir, valid_annotation_dir, gloss_fn
 
     print('Found %d matching valid files...' % len(selected_valid_files))
 
-    if 'valid'+hdf5_sep+'images' not in dataset_names:
+    try:
+        if 'valid'+hdf5_sep+'images' not in dataset_names:
 
-        hdf5_train_group = hdf5_file.create_group('valid')
-        hdf5images = hdf5_train_group.create_dataset('images',
-                                                     (len(selected_valid_files), resize_images_to, resize_images_to, num_channels),
-                                                     dtype='f')
-        hdf5labels = hdf5_train_group.create_dataset('labels', (len(selected_valid_files), 1), dtype='int32')
+            hdf5_train_group = hdf5_file.create_group('valid')
+            hdf5valid_images = hdf5_train_group.create_dataset('images',
+                                                         (len(selected_valid_files), resize_images_to, resize_images_to, num_channels),
+                                                         dtype='f')
+            hdf5valid_labels = hdf5_train_group.create_dataset('labels', (len(selected_valid_files), 1), dtype='int32')
 
-        save_train_data_in_filenames(selected_valid_files,selected_valid_synset_ids,hdf5images,hdf5labels, resize_images_to, num_channels,id_to_label_map, n_threads)
+            save_train_data_in_filenames(selected_valid_files,selected_valid_synset_ids,
+                                         hdf5valid_images,hdf5valid_labels, resize_images_to,
+                                         num_channels,id_to_label_map, n_threads)
 
-        filesize_dictionary['valid_dataset'] = len(selected_valid_files)
-        print('Created tha valid file with %d entries' %filesize_dictionary['valid_dataset'])
-    else:
-        print('Valid data exists.')
-        raise NotImplementedError
+            filesize_dictionary['valid_dataset'] = len(selected_valid_files)
+            print('Created tha valid file with %d entries' %filesize_dictionary['valid_dataset'])
+        else:
+            print('Valid data exists.')
+
+    except Exception as e:
+        print('Something went wrong...')
+        print(e.with_traceback())
+        logger.info('Something went wrong. Deleting the HDF5 File')
+        hdf5_file.__delitem__(hdf5valid_images)
+        hdf5_file.__delitem__(hdf5valid_labels)
 
     write_dictionary_to_xml(datasize_fname,filesize_dictionary,'dataset',datatypes[0],['size'],[datatypes[1]])
 
@@ -193,6 +215,10 @@ def divide_filenames_for_workers(filenames, synset_ids, n_chunks):
     :param n_chunks:
     :return:
     '''
+
+    # no division
+    if n_chunks==1:
+        return [filenames],[synset_ids],[range(0,len(filenames))]
 
     thread_filenames, thread_synset_ids, thread_indices = [],[],[]
     items_per_thread = ceil(len(filenames)*1.0/n_chunks)
@@ -316,9 +342,11 @@ def build_or_retrieve_valid_filename_to_synset_id_mapping(valid_annotation_dir, 
     :param valid_map_fname: The name to save the created dictionary
     :return:
     '''
+    global logger
     print('Building a mapping from valid file name to synset id (also the folder names in the training folder)')
     # valid_map contains a dictionary mapping filename to synset id (e.g. n01440764 is a synset id)
     if not os.path.exists(valid_map_fname):
+        logger.info('%s file not found. So creating a new one.',valid_map_fname)
         valid_map = dict()
         for file in os.listdir(valid_annotation_dir):
             if file.endswith(".xml"):
@@ -329,9 +357,10 @@ def build_or_retrieve_valid_filename_to_synset_id_mapping(valid_annotation_dir, 
                     valid_map[tail] = str(name.text)
                     break
         print('Created a dictionary (valid image file name > synset id )')
-
+        logger.info('Build a dictionary')
         with open(valid_map_fname, 'wb') as f:
             pickle.dump(valid_map, f, pickle.HIGHEST_PROTOCOL)
+            logger.info('\tCreated the file and dumped as pickle.')
     else:
         with open(valid_map_fname, 'rb') as f:
             valid_map = pickle.load(f)
@@ -422,21 +451,24 @@ def write_selected_art_nat_synset_ids_and_descriptions(sel_nat_synsets, sel_art_
     :param save_dir:
     :return:
     '''
-    print(label_map)
+
+    pretty_log_entity(label_map)
     synset_id_dictionary = {} # either synset_id -> ['nat/art','description] or synset_id -> ['description']
 
+    logger.info('Creating Synset ID dictionary ...')
     for nat_id in sel_nat_synsets:
         if not label_map:
             synset_id_dictionary[nat_id]= ['nat',synset_id_description_map[str(nat_id)]]
         else:
             synset_id_dictionary[nat_id] = ['nat',label_map[nat_id] , synset_id_description_map[nat_id]]
 
-
     for art_id in sel_art_synsets:
         if not label_map:
             synset_id_dictionary[art_id] = ['art',synset_id_description_map[art_id]]
         else:
             synset_id_dictionary[art_id] = ['art',label_map[art_id], synset_id_description_map[art_id]]
+
+    pretty_log_entity(synset_id_dictionary)
 
     if not label_map:
         write_dictionary_to_xml(filename, synset_id_dictionary,
@@ -471,22 +503,20 @@ def resize_image(fname,resize_to,n_channels):
     if resized_img.shape[0]<resize_to:
         diff = resize_to - resized_img.shape[0]
         lpad,rpad = floor(float(diff)/2.0),ceil(float(diff)/2.0)
-        #print('\tshape of resized img before padding %s'%str(resized_img.shape))
         resized_img = np.pad(resized_img,((lpad,rpad),(0,0),(0,0)),'constant',constant_values=((0,0),(0,0),(0,0)))
-        #print('\tshape of resized img after padding %s'%str(resized_img.shape))
+
     if resized_img.shape[1]<resize_to:
         diff = resize_to - resized_img.shape[1]
         lpad,rpad = floor(float(diff)/2.0),ceil(float(diff)/2.0)
-        #print('\tshape of resized img before padding %s'%str(resized_img.shape))
         resized_img = np.pad(resized_img,((0,0),(lpad,rpad),(0,0)),'constant',constant_values=((0,0),(0,0),(0,0)))
-        #print('\tshape of resized img after padding %s'%str(resized_img.shape))
+
     assert resized_img.shape[0]==resize_to
     assert resized_img.shape[1]==resize_to
     assert resized_img.shape[2]==n_channels, 'Resized image as %d channels'%resized_img.shape[2]
     return resized_img
 
 
-def read_train_data_chunk(fname, synset_id, synset_to_label_map, resize_to, n_channels):
+def read_data_example(fname, synset_id, synset_to_label_map, resize_to, n_channels):
     '''
     Read one example and output the processed image and the label.
     This method is called by the pool workers (multiprocessing)
@@ -543,7 +573,7 @@ def save_train_data_in_filenames(train_filenames, train_synset_ids, hdf5_img, hd
     train_filenames_list, train_synsetid_list, train_indices = divide_filenames_for_workers(train_filenames, train_synset_ids, n_chunk)
 
     # partial function of read_train_data_chunk with only train_filenames, train_synset_ids, train_indices as inputs
-    part_pool_func = partial(read_train_data_chunk,
+    part_pool_func = partial(read_data_example,
                              resize_to=resize_to, n_channels=n_channels,
                              synset_to_label_map=synset_to_label_map)
 
@@ -562,8 +592,8 @@ def save_train_data_in_filenames(train_filenames, train_synset_ids, hdf5_img, hd
 
         start_idx, end_idx = train_indices[chunk_id][0], train_indices[chunk_id][-1]+1
         print('Reading data from ', start_idx, ' to ', end_idx)
-        res_data = pool.starmap(part_pool_func, zip(train_filenames_list[chunk_id],train_synsetid_list[chunk_id])
-                                    )
+        res_data = pool.starmap(
+            part_pool_func, zip(train_filenames_list[chunk_id],train_synsetid_list[chunk_id]), chunksize=(end_idx-start_idx)//cpu_count)
         # get data from after task completion. Not using a timeout as these are expensive operations
         train_images, train_labels = zip(*res_data)
 
@@ -591,13 +621,36 @@ def save_train_data_in_filenames(train_filenames, train_synset_ids, hdf5_img, hd
     print('The whole process took %d seconds',total_time)
 
 
+def pretty_log_entity(value_to_print):
+    '''
+    Print something with some highlighting above and bottom to separate
+    :param value_to_print:
+    :return:
+    '''
+    global logger
+    logger.info(' ')
+    logger.info('='*80)
+    logger.info(value_to_print)
+    logger.info('='*80)
+    logger.info(' ')
+
+
 if __name__ == '__main__':
 
     train_directory = "/home/tgan4199/imagenet/ILSVRC2015/Data/CLS-LOC/train/"
     valid_directory = "/home/tgan4199/imagenet/ILSVRC2015/Data/CLS-LOC/val/"
     valid_annotation_directory = "/home/tgan4199/imagenet/ILSVRC2015/Annotations/CLS-LOC/val/"
     data_info_directory = "/home/tgan4199/imagenet/ILSVRC2015/ImageSets/"
-    data_save_directory = "imagenet_small_test/"
+    save_dir = "imagenet_small_test/"
     gloss_fname = '/home/tgan4199/imagenet/ILSVRC2015/gloss_cls-loc.txt'
 
-    save_imagenet_as_memmaps(train_directory,valid_directory,valid_annotation_directory,gloss_fname,125,125,128,data_save_directory,25)
+    if not os.path.exists(save_dir):
+        os.mkdir(save_dir)
+
+    logger = logging.getLogger('preprocess_imagenet')
+    logger.setLevel(logging.INFO)
+    fileHandler = logging.FileHandler(save_dir + os.sep + 'Imagenet.log', mode='w')
+    fileHandler.setFormatter(logging.Formatter('%(message)s'))
+    logger.addHandler(fileHandler)
+
+    save_imagenet_as_memmaps(train_directory,valid_directory,valid_annotation_directory,gloss_fname,125,125,128,save_dir,25)
