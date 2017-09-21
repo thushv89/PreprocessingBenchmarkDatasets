@@ -18,9 +18,9 @@ import logging
 logger = None
 
 
-def save_imagenet_as_memmaps(train_dir,valid_dir, valid_annotation_dir, gloss_fname,
-                             n_nat_classes, n_art_classes, resize_images_to, save_dir,
-                             n_threads):
+def save_imagenet_as_hdf5(train_dir, valid_dir, valid_annotation_dir, gloss_fname,
+                          n_nat_classes, n_art_classes, resize_images_to, save_dir,
+                          n_threads):
     '''
     Retrieves images of imagenet data and store them in a memmap
     :param train_dir: Train data dir (e.g. .../Data/CLS-LOC/train/)
@@ -31,7 +31,7 @@ def save_imagenet_as_memmaps(train_dir,valid_dir, valid_annotation_dir, gloss_fn
     :return:
     '''
     global logger
-    dataset_filename = save_dir + os.sep +  'imagenet_250_train_dataset.hdf5'
+    dataset_filename = save_dir + os.sep +  'imagenet_250_dataset.hdf5'
 
     gloss_cls_loc_fname = save_dir + os.sep + 'gloss-cls-loc.txt'  # the gloss.txt has way more categories than the 1000 imagenet ones. This files saves the 1000
     selected_gloss_fname = save_dir + os.sep + 'selected-gloss.xml'
@@ -653,4 +653,4 @@ if __name__ == '__main__':
     fileHandler.setFormatter(logging.Formatter('%(message)s'))
     logger.addHandler(fileHandler)
 
-    save_imagenet_as_memmaps(train_directory,valid_directory,valid_annotation_directory,gloss_fname,125,125,128,save_dir,25)
+    save_imagenet_as_hdf5(train_directory, valid_directory, valid_annotation_directory, gloss_fname, 125, 125, 128, save_dir, 25)
