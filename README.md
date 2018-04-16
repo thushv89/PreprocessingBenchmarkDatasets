@@ -43,9 +43,9 @@ test_dataset, test_labels = dataset_file['/test/images'], dataset_file['/test/la
 * Check Imagenet with crash in middle
 * Check `test_saved_cifar` for CIFAR 10 with zero-mean unit-variance - **OK**
 * Check `test_saved_cifar` for CIFAR 100 with zero-mean unit-variance - **OK**
-* Check `test_saved_cifar` for CIFAR 10 with zero-mean - **OK**
-* Check `test_saved_cifar` for CIFAR 100 with zero-mean - **OK**
-* Check `test_saved_cifar` for CIFAR 10 with unit-variance - **OK**
-* Check `test_saved_cifar` for CIFAR 100 with unit-variance - **OK**
+* Check `test_saved_cifar` for CIFAR 10 with zero-mean - 
+* Check `test_saved_cifar` for CIFAR 100 with zero-mean - 
+* Check `test_saved_cifar` for CIFAR 10 with unit-variance -
+* Check `test_saved_cifar` for CIFAR 100 with unit-variance -
 
 
