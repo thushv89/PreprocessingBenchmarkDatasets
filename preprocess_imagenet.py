@@ -14,15 +14,16 @@ from functools import partial
 import sys
 import time
 import logging
+import getopt
 
 logger = None
 
 
 def save_imagenet_as_hdf5(train_dir, valid_dir, valid_annotation_dir, gloss_fname,
                           n_nat_classes, n_art_classes, resize_images_to, save_dir,
-                          n_threads):
+                          n_threads, zero_mean, unit_variance):
     '''
-    Retrieves images of imagenet data and store them in a memmap
+    Retrieves images of imagenet data and store them in a hdf5
     :param train_dir: Train data dir (e.g. .../Data/CLS-LOC/train/)
     :param valid_dir: Valid data dir (e.g. .../Data/CLS-LOC/val/)
     :param valid_annotation_dir: Annotation dir (e.g. .../ILSVRC2015/Annotations/CLS-LOC/val/)
@@ -62,11 +63,14 @@ def save_imagenet_as_hdf5(train_dir, valid_dir, valid_annotation_dir, gloss_fnam
     print('\tSample Subdirectories: %s\n' % train_subdirectories[:5])
     print('\tNumber of total SubDirs: ',len(train_subdirectories))
 
+    # Isolate the related classes from the full list of classes from gloss.txt file and writing the isolated instances to
+    # gloss_cls_loc.txt file
     if not os.path.exists(gloss_cls_loc_fname):
         synset_id_to_desc_map = write_art_nat_ordered_class_descriptions(train_subdirectories,gloss_fname, gloss_cls_loc_fname)
     else:
         synset_id_to_desc_map = retrieve_art_nat_ordered_class_descriptions(gloss_cls_loc_fname)
 
+    # Selecting a random set of natural and artificial classes from the full dataset
     if not os.path.exists(label_info_fname) and not os.path.exists(selected_gloss_fname):
         selected_natural_synsets, selected_artificial_synsets, id_to_label_map = sample_n_natural_and_artificial_classes(n_nat_classes,n_art_classes, gloss_cls_loc_fname)
         print('Summary of selected synsets ...')
@@ -81,12 +85,13 @@ def save_imagenet_as_hdf5(train_dir, valid_dir, valid_annotation_dir, gloss_fnam
             assert rand_nat in train_subdirectories
             assert rand_art in train_subdirectories
 
-        # Temporary file
+        # Temporary file (used to restore if the program crashes in the middle)
         with open(label_info_fname, 'wb') as f:
             lable_info = {'nat_synsets':selected_natural_synsets,'art_synsets':selected_artificial_synsets,
                           'id_to_label_map':id_to_label_map}
             pickle.dump(lable_info, f, pickle.HIGHEST_PROTOCOL)
 
+        # Write the selected nat and art class information to selected-gloss.xml file
         write_selected_art_nat_synset_ids_and_descriptions(selected_natural_synsets,selected_artificial_synsets,
                                                            synset_id_to_desc_map,selected_gloss_fname,None)
     else:
@@ -95,6 +100,7 @@ def save_imagenet_as_hdf5(train_dir, valid_dir, valid_annotation_dir, gloss_fnam
             selected_natural_synsets = label_info['nat_synsets']
             selected_artificial_synsets = label_info['art_synsets']
             id_to_label_map = label_info['id_to_label_map']
+
 
     write_selected_art_nat_synset_ids_and_descriptions(selected_natural_synsets, selected_artificial_synsets,
                                                        synset_id_to_desc_map, selected_gloss_class_fname,
@@ -143,7 +149,8 @@ def save_imagenet_as_hdf5(train_dir, valid_dir, valid_annotation_dir, gloss_fnam
             filesize_dictionary['train_dataset'] = n_train
 
             save_train_data_in_filenames(train_filenames, train_synset_ids, hdf5images, hdf5labels,
-                                         resize_images_to, num_channels, id_to_label_map, n_threads)
+                                         resize_images_to, num_channels, id_to_label_map, n_threads,
+                                         zero_mean, unit_variance)
 
             # TODO: Need to fix this
             #write_dictionary_to_xml(id_to_label_map_fname,id_to_label_map,'synset_id',datatypes[0],['label'],[datatypes[1]])
@@ -492,13 +499,15 @@ def resize_image(fname,resize_to,n_channels):
     im.thumbnail((resize_to,resize_to), Image.ANTIALIAS)
     resized_img = np.array(im)
 
+    # Fixing dimensions
     if resized_img.ndim<3:
         resized_img = resized_img.reshape((resized_img.shape[0],resized_img.shape[1],1))
         resized_img = np.repeat(resized_img,3,axis=2)
         assert resized_img.shape[2]==n_channels
     # if there is an alpha layer
-    if resized_img.ndim>3:
+    elif resized_img.shape[2]>3:
         resized_img = resized_img[:,:,:3]
+
 
     if resized_img.shape[0]<resize_to:
         diff = resize_to - resized_img.shape[0]
@@ -516,7 +525,7 @@ def resize_image(fname,resize_to,n_channels):
     return resized_img
 
 
-def read_data_example(fname, synset_id, synset_to_label_map, resize_to, n_channels):
+def read_data_example(fname, synset_id, synset_to_label_map, resize_to, n_channels, zero_mean, unit_variance):
     '''
     Read one example and output the processed image and the label.
     This method is called by the pool workers (multiprocessing)
@@ -538,11 +547,12 @@ def read_data_example(fname, synset_id, synset_to_label_map, resize_to, n_channe
         return
 
     # standardizing the image
-    resized_img = (resized_img - np.mean(resized_img))
-    resized_img /= np.std(resized_img)
-
-    if np.random.random()<0.1:
-        assert -.1 < np.mean(resized_img) < .1, 'Mean is not zero'
+    if zero_mean or unit_variance:
+        resized_img = (resized_img - np.mean(resized_img))
+        if np.random.random() < 0.1:
+            assert -.1 < np.mean(resized_img) < .1, 'Mean is not zero'
+    if unit_variance:
+        resized_img /= np.std(resized_img)
         assert 0.9 < np.std(resized_img) < 1.1, 'Standard deviation is not one'
 
     train_images = resized_img
@@ -553,7 +563,10 @@ def read_data_example(fname, synset_id, synset_to_label_map, resize_to, n_channe
     return train_images, train_labels
 
 
-def save_train_data_in_filenames(train_filenames, train_synset_ids, hdf5_img, hdf5_labels, resize_to, n_channels, synset_to_label_map, n_chunk):
+def save_train_data_in_filenames(
+        train_filenames, train_synset_ids, hdf5_img, hdf5_labels,
+        resize_to, n_channels, synset_to_label_map, n_chunk,
+        zero_mean, unit_variance):
     '''
     Save the training data using multiprocessing
     This method uses apply_async method.
@@ -575,7 +588,8 @@ def save_train_data_in_filenames(train_filenames, train_synset_ids, hdf5_img, hd
     # partial function of read_train_data_chunk with only train_filenames, train_synset_ids, train_indices as inputs
     part_pool_func = partial(read_data_example,
                              resize_to=resize_to, n_channels=n_channels,
-                             synset_to_label_map=synset_to_label_map)
+                             synset_to_label_map=synset_to_label_map,
+                             zero_mean=zero_mean, unit_variance=unit_variance)
 
     # do not use all the CPUs if there are a lot only use half of them
     # if using all, leave one free
@@ -637,12 +651,62 @@ def pretty_log_entity(value_to_print):
 
 if __name__ == '__main__':
 
+    '''
+    Default values for the various user inputs
+    '''
     train_directory = "/home/tgan4199/imagenet/ILSVRC2015/Data/CLS-LOC/train/"
     valid_directory = "/home/tgan4199/imagenet/ILSVRC2015/Data/CLS-LOC/val/"
     valid_annotation_directory = "/home/tgan4199/imagenet/ILSVRC2015/Annotations/CLS-LOC/val/"
-    data_info_directory = "/home/tgan4199/imagenet/ILSVRC2015/ImageSets/"
     save_dir = "imagenet_small_test/"
     gloss_fname = '/home/tgan4199/imagenet/ILSVRC2015/gloss_cls-loc.txt'
+
+    substract_mean = True
+    unit_variance = True
+    resize_to = 128
+    nat_classes = 125
+    art_classes = 125
+    n_threads = 25
+
+    try:
+        opts, args = getopt.getopt(
+            sys.argv[1:], "",
+            ["train_dir=", "valid_dir=", "valid_annotation_dir=", "data_info_dir=", "save_dir=", 'gloss_fname=',
+             'zero_mean=', 'unit_variance=', 'resize_to=', 'nat_classes=', 'art_classes=', 'n_threads='])
+
+    except getopt.GetoptError as err:
+        print(err.with_traceback())
+        print('Please provide the following data to run correctly (* marked are essential)\n'+
+            '<filename>.py --train_dir=<*something like .../Data/CLS-LOC/train/> --valid_dir=<*something like .../Data/CLS-LOC/val> \n'+
+            '--valid_annotation_dir=<*something like .../Annotations/CLS-LOC/val/> --data_info=<*something like .../ImageSets/\n' +
+            '--save_dir=<*dir you want to save the HDF5 files to> --gloss_fname=<*gloss.txt file> --zero_mean=<(1 or 0) make images zero-mean>\n' +
+            '--unit_variance=<(1 or 0) make images unit variance> --resize_to=<(int) resize all the images to a square size>\n' +
+            '--nat_classes=<*(int) number of natual classe to include in HDF5> --art_classes=<*(int) number of artificial classes>\n' +
+            '--n_threads=<(int) number of threads for image processing>\n')
+
+    if len(opts) != 0:
+        for opt, arg in opts:
+            if opt == '--train_dir':
+                train_directory = arg
+            if opt == '--valid_dir':
+                valid_directory = arg
+            if opt == '--valid_annotation_dir':
+                valid_annotation_directory = arg
+            if opt == '--save_dir':
+                save_dir = arg
+            if opt == '--gloss_fname':
+                gloss_fname = arg
+            if opt == '--zero_mean':
+                zero_mean = bool(int(arg))
+            if opt == '--unit_variance':
+                unit_var = bool(int(arg))
+            if opt == '--resize_to':
+                resize_to = int(arg)
+            if opt == '--nat_classes':
+                nat_classes = int(arg)
+            if opt == '--art_classes':
+                art_classes = int(arg)
+            if opt == '--n_threads':
+                n_threads = int(arg)
 
     if not os.path.exists(save_dir):
         os.mkdir(save_dir)
@@ -653,4 +717,7 @@ if __name__ == '__main__':
     fileHandler.setFormatter(logging.Formatter('%(message)s'))
     logger.addHandler(fileHandler)
 
-    save_imagenet_as_hdf5(train_directory, valid_directory, valid_annotation_directory, gloss_fname, 125, 125, 128, save_dir, 25)
+    save_imagenet_as_hdf5(
+        train_directory, valid_directory, valid_annotation_directory, gloss_fname,
+        nat_classes, art_classes, resize_to, save_dir, n_threads, zero_mean, unit_variance
+    )

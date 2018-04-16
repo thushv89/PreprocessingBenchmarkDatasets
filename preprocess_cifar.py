@@ -101,8 +101,8 @@ def save_cifar10_as_hdf5(data_dir, original_image_w, resize_images_to, save_dir)
         hdf5_test_labels[:, 0] = test_labels[:,0]
 
 
-def process_dataset_with_multiprocessing(dataset_images, dataset_labels, resize_images_to):
-    part_preprocess_images_func = partial(preprocess_images_by_one, resize_to=resize_images_to)
+def process_dataset_with_multiprocessing(dataset_images, dataset_labels, resize_images_to, orig_size):
+    part_preprocess_images_func = partial(preprocess_images_by_one, resize_to=resize_images_to, orig_size=orig_size)
 
     # do not use all the CPUs if there are a lot only use half of them
     # if using all, leave one free
@@ -163,7 +163,7 @@ def save_cifar100_as_hdf5(data_dir, original_image_w, resize_images_to, save_dir
                                                                 resize_images_to, n_channels), dtype='f')
         hdf5labels = hdf5_train_group.create_dataset('labels', (n_train, 1), dtype='int32')
 
-        train_dataset,train_labels = process_dataset_with_multiprocessing(train_dataset, train_labels, resize_images_to)
+        train_dataset,train_labels = process_dataset_with_multiprocessing(train_dataset, train_labels, resize_images_to,original_image_w)
         hdf5images[:, :, :, :] = train_dataset
         hdf5labels[:,0] = train_labels[:,0]
 
@@ -197,17 +197,19 @@ def save_cifar100_as_hdf5(data_dir, original_image_w, resize_images_to, save_dir
         hdf5_test_labels[:, 0] = test_labels[:,0]
 
 
-def preprocess_images_by_one(uint8_image, label, resize_to):
+def preprocess_images_by_one(uint8_image, label, resize_to,orig_size):
     '''
     Normalize images to zero mean and unit variance
+    And resize by cropping the image if needed
     :param img_uint8_batch:
     :return:
     '''
 
     im = Image.fromarray(uint8_image[0])
-    x = np.random.randint(0,8)
-    y = np.random.randint(0,8)
-    im = im.crop((x, y, x + resize_to, y + resize_to))
+    if resize_to != orig_size:
+        x = np.random.randint(0,8)
+        y = np.random.randint(0,8)
+        im = im.crop((x, y, x + resize_to, y + resize_to))
     img = np.asarray(im).astype('float32')
     img -= np.mean(img)
     img /= np.std(img)
@@ -217,11 +219,20 @@ def preprocess_images_by_one(uint8_image, label, resize_to):
 
     return img,label
 
+
 if __name__=='__main__':
 
-    cifar100_data_dir = 'data'+os.sep+'cifar-100-python'
-    cifar10_data_dir = 'data' + os.sep + 'cifar-10'
-
     save_dir = 'data'
-    save_cifar10_as_hdf5(cifar10_data_dir,32,24,save_dir)
-    #save_cifar100_as_hdf5(cifar100_data_dir,32,24,save_dir)
+    if not os.path.exists(save_dir):
+        os.mkdir(save_dir)
+
+    cifar100_data_dir = os.path.join(save_dir,'cifar-100-python')
+    if not os.path.exists(cifar100_data_dir):
+        os.mkdir(cifar100_data_dir)
+
+    cifar10_data_dir = os.path.join('data','cifar-10')
+    if not os.path.exists(cifar10_data_dir):
+        os.mkdir(cifar10_data_dir)
+
+    save_cifar10_as_hdf5(cifar10_data_dir,32,32,save_dir)
+    save_cifar100_as_hdf5(cifar100_data_dir,32,32,save_dir)
