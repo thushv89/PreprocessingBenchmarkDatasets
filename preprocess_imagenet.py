@@ -197,7 +197,7 @@ def save_imagenet_as_hdf5(train_dir, valid_dir, valid_annotation_dir, gloss_fnam
 
             save_train_data_in_filenames(selected_valid_files,selected_valid_synset_ids,
                                          hdf5valid_images,hdf5valid_labels, resize_images_to,
-                                         num_channels,id_to_label_map, n_threads)
+                                         num_channels,id_to_label_map, n_threads, zero_mean, unit_variance)
 
             filesize_dictionary['valid_dataset'] = len(selected_valid_files)
             print('Created tha valid file with %d entries' %filesize_dictionary['valid_dataset'])
@@ -351,6 +351,7 @@ def build_or_retrieve_valid_filename_to_synset_id_mapping(valid_annotation_dir, 
     '''
     global logger
     print('Building a mapping from valid file name to synset id (also the folder names in the training folder)')
+    print('This can take a while')
     # valid_map contains a dictionary mapping filename to synset id (e.g. n01440764 is a synset id)
     if not os.path.exists(valid_map_fname):
         logger.info('%s file not found. So creating a new one.',valid_map_fname)
@@ -657,7 +658,7 @@ if __name__ == '__main__':
     train_directory = "/home/tgan4199/imagenet/ILSVRC2015/Data/CLS-LOC/train/"
     valid_directory = "/home/tgan4199/imagenet/ILSVRC2015/Data/CLS-LOC/val/"
     valid_annotation_directory = "/home/tgan4199/imagenet/ILSVRC2015/Annotations/CLS-LOC/val/"
-    save_dir = "imagenet_small_test/"
+    save_dir = os.path.join("data","imagenet_small_test/")
     gloss_fname = '/home/tgan4199/imagenet/ILSVRC2015/gloss_cls-loc.txt'
 
     substract_mean = True

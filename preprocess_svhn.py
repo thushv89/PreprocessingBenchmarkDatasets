@@ -10,7 +10,7 @@ import scipy.io
 
 def save_svhn10_as_hdf5(data_dir, original_image_w, resize_images_to, save_dir):
 
-    print('\nProcessing Cifar-10 Data')
+    print('\nProcessing SVHN-10 Data')
 
     hdf5_sep = '/'
     n_train = 73257
@@ -145,23 +145,6 @@ def preprocess_images_by_one(uint8_image, label, resize_to):
 
     return img,label
 
-def test_by_saving_images_from_hdf5(hdf5file):
-
-    dataset_file = h5py.File(hdf5file, "r")
-    train_dataset = dataset_file['/train/images']
-
-    for f_i in range(5):
-        rand_id = np.random.randint(10000)
-        np_img = train_dataset[rand_id,:,:,:]
-        #np_img = (np_img).astype(np.uint8)
-        np_img -= np.min(np_img)
-        np_img /= np.max(np_img)
-        np_img = (np_img*255.0).astype(np.uint8)
-        print(np_img)
-        print(np.min(np_img))
-        print(np.max(np_img))
-        img = Image.fromarray(np_img,'RGB')
-        img.save('svhn_test_%d.jpg'%f_i)
 
 
 if __name__=='__main__':
@@ -170,4 +153,3 @@ if __name__=='__main__':
 
     save_dir = 'data'
     save_svhn10_as_hdf5(svhn10_data_dir,32,32,save_dir)
-    test_by_saving_images_from_hdf5(os.path.join('data','svhn_10_dataset.hdf5'))

@@ -28,3 +28,24 @@ dataset_file = h5py.File("data" + os.sep + "filename.hdf5", "r")
 train_dataset, train_labels = dataset_file['/train/images'], dataset_file['/train/labels']
 test_dataset, test_labels = dataset_file['/test/images'], dataset_file['/test/labels']
 ```
+
+# Tests to Conduct
+* Check preprocess_cifar for CIFAR 10 with zero-mean unit-variance - **OK**
+* Check preprocess_cifar for CIFAR 100  with zero-mean unit-variance - **OK**
+* Check preprocess_cifar for CIFAR 10 with zero-mean - 
+* Check preprocess_cifar for CIFAR 100  with zero-mean - 
+* Check preprocess_cifar for CIFAR 10 with unit-variance - 
+* Check preprocess_cifar for CIFAR 100  with unit-variance - 
+* Check preprocess_cifar for CIFAR 10 with Resize - **OK**
+* Check preprocess_cifar for CIFAR 100 with Resize - **OK**
+* Check SVHN - **OK**
+* Check Imagenet from Start - **OK**
+* Check Imagenet with crash in middle
+* Check `test_saved_cifar` for CIFAR 10 with zero-mean unit-variance - **OK**
+* Check `test_saved_cifar` for CIFAR 100 with zero-mean unit-variance - **OK**
+* Check `test_saved_cifar` for CIFAR 10 with zero-mean - **OK**
+* Check `test_saved_cifar` for CIFAR 100 with zero-mean - **OK**
+* Check `test_saved_cifar` for CIFAR 10 with unit-variance - **OK**
+* Check `test_saved_cifar` for CIFAR 100 with unit-variance - **OK**
+
+
