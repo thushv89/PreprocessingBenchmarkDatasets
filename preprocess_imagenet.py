@@ -658,7 +658,7 @@ if __name__ == '__main__':
     train_directory = "/home/tgan4199/imagenet/ILSVRC2015/Data/CLS-LOC/train/"
     valid_directory = "/home/tgan4199/imagenet/ILSVRC2015/Data/CLS-LOC/val/"
     valid_annotation_directory = "/home/tgan4199/imagenet/ILSVRC2015/Annotations/CLS-LOC/val/"
-    save_dir = os.path.join("data","imagenet_small_test/")
+    save_dir = os.path.join("data","imagenet_subset/")
     gloss_fname = '/home/tgan4199/imagenet/ILSVRC2015/gloss_cls-loc.txt'
 
     substract_mean = True
